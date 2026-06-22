@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MailTalk</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --panel: #ffffff; --line: #e2e5ea; --text: #1c1e22;
+    --muted: #6b7280; --accent: #2a6df4; --self: #d9fdd3; --other: #ffffff;
+    --red: #e24b4a; --amber: #ef9f27; --blue: #378add; --gray: #9aa0a6;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,sans-serif;
+         color: var(--text); background: var(--bg); height: 100vh; display: flex; flex-direction: column; }
+  header { background: var(--panel); border-bottom: 1px solid var(--line);
+           padding: 10px 16px; display: flex; align-items: center; gap: 16px; flex-shrink: 0; }
+  header h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  .toggle { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .toggle button { border: none; background: var(--panel); padding: 6px 14px; cursor: pointer; font-size: 13px; }
+  .toggle button.active { background: var(--accent); color: #fff; }
+  #search { flex: 1; max-width: 320px; padding: 7px 12px; border: 1px solid var(--line);
+            border-radius: 8px; font-size: 14px; }
+  #status { margin-left: auto; font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 10px; }
+  .progress { width: 160px; height: 6px; background: var(--line); border-radius: 4px; overflow: hidden; }
+  .progress > div { height: 100%; background: var(--accent); width: 0; transition: width .3s; }
+  .main { flex: 1; display: flex; min-height: 0; }
+  .sidebar { width: 380px; border-right: 1px solid var(--line); background: var(--panel);
+             overflow-y: auto; flex-shrink: 0; }
+  .lane-group { border-bottom: 1px solid var(--line); }
+  .lane-head { padding: 8px 14px; font-size: 13px; font-weight: 600; position: sticky; top: 0;
+               background: #fafbfc; border-bottom: 1px solid var(--line); }
+  .conv { padding: 10px 14px; border-bottom: 1px solid #f0f1f3; cursor: pointer; display: flex; gap: 10px; }
+  .conv:hover { background: #f7f9fc; }
+  .conv.active { background: #eaf1ff; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 5px; flex-shrink: 0; }
+  .dot.red { background: var(--red); } .dot.amber { background: var(--amber); }
+  .dot.blue { background: var(--blue); } .dot.gray { background: var(--gray); }
+  .conv-body { flex: 1; min-width: 0; }
+  .conv-subj { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .conv-subj.unread::before { content: "●"; color: var(--accent); font-size: 9px; margin-right: 5px; vertical-align: 1px; }
+  .conv-meta { font-size: 12px; color: var(--muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tags { margin-top: 4px; display: flex; gap: 5px; flex-wrap: wrap; }
+  .tag { font-size: 11px; padding: 1px 7px; border-radius: 10px; background: #eef0f3; color: #4b5563; }
+  .tag.tome { background: #fde8e8; color: #a32d2d; }
+  .tag.cc { background: #e6f1fb; color: #185fa5; }
+  .chat { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .chat-head { padding: 12px 18px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  .chat-head h2 { margin: 0; font-size: 16px; }
+  .reason-chip { display: inline-block; margin-top: 8px; font-size: 12px; padding: 4px 12px; border-radius: 14px; }
+  .reason-chip.red { background: #fde8e8; color: #a32d2d; }
+  .reason-chip.amber { background: #fbeeda; color: #854f0b; }
+  .reason-chip.blue { background: #e6f1fb; color: #185fa5; }
+  .reason-chip.gray { background: #eef0f3; color: #5f5e5a; }
+  .bubbles { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 12px; }
+  .bubble { max-width: 70%; }
+  .bubble.self { align-self: flex-end; }
+  .bubble .who { font-size: 12px; color: var(--muted); margin-bottom: 3px; }
+  .bubble.self .who { text-align: right; }
+  .bubble .body { padding: 9px 13px; border-radius: 12px; font-size: 14px; line-height: 1.6;
+                  white-space: pre-wrap; word-break: break-word; }
+  .bubble.other .body { background: var(--other); border: 1px solid var(--line); border-top-left-radius: 3px; }
+  .bubble.self .body { background: var(--self); border-top-right-radius: 3px; }
+  .composer { border-top: 1px solid var(--line); padding: 12px 18px; background: var(--panel); }
+  .composer textarea { width: 100%; min-height: 56px; resize: vertical; padding: 9px 12px;
+                       border: 1px solid var(--line); border-radius: 10px; font-size: 14px; font-family: inherit; }
+  .composer .row { display: flex; align-items: center; gap: 12px; margin-top: 8px; }
+  .composer button { background: var(--accent); color: #fff; border: none; padding: 9px 18px;
+                     border-radius: 10px; font-size: 14px; cursor: pointer; }
+  .composer .note { font-size: 12px; color: var(--muted); }
+  .empty { margin: auto; color: var(--muted); font-size: 14px; text-align: center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>MailTalk</h1>
+  <div class="toggle">
+    <button id="view-topic" class="active" onclick="setView('topic')">トピックごと</button>
+    <button id="view-person" onclick="setView('person')">人ごと</button>
+  </div>
+  <input id="search" placeholder="件名・差出人で検索" oninput="render()" />
+  <div id="status">
+    <span id="status-text">起動中…</span>
+    <div class="progress"><div id="progress-bar"></div></div>
+  </div>
+</header>
+<div class="main">
+  <div class="sidebar" id="sidebar"></div>
+  <div class="chat" id="chat">
+    <div class="empty">左の一覧から会話を選んでください。<br>🔴 自分ボールから片付けるのがおすすめです。</div>
+  </div>
+</div>
+<script>
+const LANES = [
+  { key: "red",   label: "🔴 自分ボール" },
+  { key: "amber", label: "🟠 活発" },
+  { key: "blue",  label: "🔵 共有(FYI)" },
+  { key: "gray",  label: "⚪ 静か" },
+];
+let convs = [];
+let view = "topic";
+let activeId = null;
+
+function setView(v) {
+  view = v;
+  document.getElementById("view-topic").classList.toggle("active", v === "topic");
+  document.getElementById("view-person").classList.toggle("active", v === "person");
+  render();
+}
+
+async function poll() {
+  try {
+    const r = await fetch("/api/status");
+    const d = await r.json();
+    const s = d.sync;
+    const txt = document.getElementById("status-text");
+    const bar = document.getElementById("progress-bar");
+    txt.textContent = s.message || s.label;
+    if (s.total) {
+      bar.style.width = Math.round((s.processed / s.total) * 100) + "%";
+    } else if (s.state === "syncing") {
+      bar.style.width = "50%";
+    } else if (s.state === "ready") {
+      bar.style.width = "100%";
+    }
+    await loadConversations();
+    if (s.state !== "ready" && s.state !== "error") {
+      setTimeout(poll, 1500);
+    }
+  } catch (e) {
+    setTimeout(poll, 2000);
+  }
+}
+
+async function loadConversations() {
+  const r = await fetch("/api/conversations");
+  const d = await r.json();
+  convs = d.conversations;
+  render();
+}
+
+function matchesSearch(c, q) {
+  if (!q) return true;
+  q = q.toLowerCase();
+  return (c.subject_norm || "").toLowerCase().includes(q) ||
+         (c.last_sender_email || "").toLowerCase().includes(q) ||
+         (c.participants || []).some(p => p.toLowerCase().includes(q));
+}
+
+function fmtTime(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+}
+
+function convRow(c) {
+  const last = c.last_from_me ? "自分" : (c.last_sender_email || "—");
+  const tags = [];
+  if (c.any_unread) tags.push('<span class="tag">未読</span>');
+  if (c.i_am_to) tags.push('<span class="tag tome">To:自分</span>');
+  else if (c.i_am_cc_only) tags.push('<span class="tag cc">CCのみ</span>');
+  tags.push(`<span class="tag">人数${c.participant_count}</span>`);
+  if (c.velocity_recent) tags.push(`<span class="tag">直近${c.velocity_recent}</span>`);
+  const active = c.conversation_id === activeId ? " active" : "";
+  const unread = c.any_unread ? " unread" : "";
+  return `<div class="conv${active}" onclick="openConv('${c.conversation_id}')">
+    <div class="dot ${c.lane}"></div>
+    <div class="conv-body">
+      <div class="conv-subj${unread}">${esc(c.subject_norm || "(件名なし)")}</div>
+      <div class="conv-meta">${esc(last)} ・ ${fmtTime(c.last_received)}</div>
+      <div class="tags">${tags.join("")}</div>
+    </div>
+  </div>`;
+}
+
+function render() {
+  const q = document.getElementById("search").value.trim();
+  const filtered = convs.filter(c => matchesSearch(c, q));
+  const sb = document.getElementById("sidebar");
+
+  if (view === "topic") {
+    let html = "";
+    for (const lane of LANES) {
+      const items = filtered.filter(c => c.lane === lane.key);
+      if (!items.length) continue;
+      html += `<div class="lane-group"><div class="lane-head">${lane.label}（${items.length}）</div>`;
+      html += items.map(convRow).join("");
+      html += `</div>`;
+    }
+    sb.innerHTML = html || '<div class="empty" style="padding:20px">該当する会話がありません。</div>';
+  } else {
+    const byPerson = {};
+    for (const c of filtered) {
+      const key = c.last_from_me ? "（自分が最後）" : (c.last_sender_email || "—");
+      (byPerson[key] = byPerson[key] || []).push(c);
+    }
+    let html = "";
+    for (const person of Object.keys(byPerson).sort()) {
+      html += `<div class="lane-group"><div class="lane-head">${esc(person)}（${byPerson[person].length}）</div>`;
+      html += byPerson[person].map(convRow).join("");
+      html += `</div>`;
+    }
+    sb.innerHTML = html || '<div class="empty" style="padding:20px">該当する会話がありません。</div>';
+  }
+}
+
+async function openConv(cid) {
+  activeId = cid;
+  render();
+  const c = convs.find(x => x.conversation_id === cid);
+  const r = await fetch(`/api/conversations/${encodeURIComponent(cid)}/messages`);
+  const d = await r.json();
+  const lane = LANES.find(l => l.key === c.lane);
+  const bubbles = d.messages.map(m => {
+    const cls = m.is_from_me ? "self" : "other";
+    const who = m.is_from_me ? "自分" : (m.sender_name || m.sender_email);
+    return `<div class="bubble ${cls}">
+      <div class="who">${esc(who)} ・ ${fmtTime(m.received_time)}</div>
+      <div class="body">${esc(m.body_preview || "")}</div>
+    </div>`;
+  }).join("");
+
+  document.getElementById("chat").innerHTML = `
+    <div class="chat-head">
+      <h2>${esc(c.subject_norm || "(件名なし)")}</h2>
+      <span class="reason-chip ${c.lane}">${lane.label.split(" ")[0]} ${esc(c.lane_reason)}</span>
+    </div>
+    <div class="bubbles" id="bubbles">${bubbles || '<div class="empty">メールがありません。</div>'}</div>
+    <div class="composer">
+      <textarea id="reply-body" placeholder="返信を入力（全員返信の下書きをOutlookで開きます。送信は手動）"></textarea>
+      <div class="row">
+        <button onclick="sendReply('${cid}')">Outlookで返信を開く</button>
+        <span class="note">※ ツールは下書きを開くだけ。宛先・本文を確認して、送信はご自身で。</span>
+      </div>
+    </div>`;
+  const b = document.getElementById("bubbles");
+  b.scrollTop = b.scrollHeight;
+}
+
+async function sendReply(cid) {
+  const body = document.getElementById("reply-body").value;
+  const btn = event.target;
+  btn.disabled = true; btn.textContent = "開いています…";
+  try {
+    const r = await fetch(`/api/conversations/${encodeURIComponent(cid)}/reply`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ body }),
+    });
+    const d = await r.json();
+    btn.textContent = d.ok ? "Outlookで開きました" : "失敗しました";
+  } catch (e) {
+    btn.textContent = "失敗しました";
+  }
+  setTimeout(() => { btn.disabled = false; btn.textContent = "Outlookで返信を開く"; }, 2000);
+}
+
+function esc(s) {
+  return (s || "").replace(/[&<>"']/g, c => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[c]));
+}
+
+poll();
+</script>
+</body>
+</html>
