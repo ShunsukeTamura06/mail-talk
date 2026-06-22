@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from mailtalk import sync as sync_mod
+from mailtalk import config
 from mailtalk.db import Database
 from mailtalk.fake_outlook import FakeOutlookSource
 from mailtalk.models import LANE_RED
@@ -24,9 +24,9 @@ def test_fake_before_and_since_filters():
     assert all(m.received_time < cutoff for m in old)
 
 
-def test_cold_start_window_then_backfill(monkeypatch):
+def test_cold_start_window_then_backfill():
     # ウィンドウを1日に縮め、Fakeの古いメール(数日前)をバックフィル対象にする。
-    monkeypatch.setattr(sync_mod, "COLD_WINDOW_DAYS", 1)
+    config.set_config(config.Config(cold_window_days=1, backfill_old=True))
     db = Database(":memory:")
     mgr = SyncManager(db, FakeOutlookSource())
 
@@ -44,9 +44,25 @@ def test_cold_start_window_then_backfill(monkeypatch):
     db.close()
 
 
-def test_incremental_after_cold(monkeypatch):
+def test_backfill_disabled_loads_recent_only():
+    # backfill_old=False なら直近ウィンドウのみ読み込み、古い分は取り込まない。
+    config.set_config(config.Config(cold_window_days=1, backfill_old=False))
+    db = Database(":memory:")
+    mgr = SyncManager(db, FakeOutlookSource())
+    mgr.run(full=False)
+
+    from datetime import datetime, timedelta
+
+    recent = list(FakeOutlookSource().iter_messages(since=datetime.now() - timedelta(days=1)))
+    assert len(db.all_messages()) == len(recent)
+    assert db.get_state("backfill_done") is None
+    assert mgr.status()["state"] == STATE_READY
+    db.close()
+
+
+def test_incremental_after_cold():
     # 2回目以降は last_sync_time を起点に差分同期する（コールド分岐に入らない）。
-    monkeypatch.setattr(sync_mod, "COLD_WINDOW_DAYS", 1)
+    config.set_config(config.Config(cold_window_days=1, backfill_old=True))
     db = Database(":memory:")
     mgr = SyncManager(db, FakeOutlookSource())
     mgr.run(full=False)

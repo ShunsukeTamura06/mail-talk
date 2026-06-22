@@ -1,0 +1,8 @@
+{
+  "cold_window_days": 90,
+  "backfill_old": true,
+  "active_threshold": 6,
+  "host": "127.0.0.1",
+  "port": 8765,
+  "open_browser": true
+}

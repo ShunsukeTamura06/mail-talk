@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+from .config import get_config
 from .models import (
     LANE_AMBER,
     LANE_BLUE,
@@ -19,7 +20,7 @@ from .models import (
     Conversation,
 )
 
-# 直近24-48hの件数しきい値。実データを見て調整可能にする。
+# 直近24-48hの件数しきい値の既定。実値は config.json で調整可能（get_config）。
 ACTIVE_THRESHOLD = 6
 
 
@@ -49,7 +50,7 @@ def classify(conv: Conversation) -> tuple[str, str]:
     #     return LANE_RED, "CCだが本文であなたに依頼あり"
 
     # 2. 🟠 活発
-    if conv.velocity_recent >= ACTIVE_THRESHOLD:
+    if conv.velocity_recent >= get_config().active_threshold:
         return LANE_AMBER, f"直近{conv.velocity_recent}件・活発にやり取り中"
 
     # 3. 🔵 共有(FYI)

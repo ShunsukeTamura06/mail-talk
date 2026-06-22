@@ -140,6 +140,39 @@ class Win32OutlookSource:
         self._app = None
         self._ns = None
         self._my_addrs: set[str] | None = None
+        # EX(DN)→SMTP解決の結果キャッシュ。同じ人を何度も解決し直さない
+        # （recipients解決はCOM往復が多くコールド取得の主コスト）。
+        self._smtp_cache: dict[str, str] = {}
+
+    def _cached_smtp(self, address_entry) -> str:
+        """AddressEntryのSMTP解決をキャッシュ付きで行う。"""
+        if address_entry is None:
+            return ""
+        key = None
+        try:
+            key = address_entry.Address  # DN/SMTP（解決より軽い識別子）
+        except Exception:  # noqa: BLE001
+            key = None
+        if key is not None and key in self._smtp_cache:
+            return self._smtp_cache[key]
+        smtp = _resolve_smtp(address_entry)
+        if key is not None:
+            self._smtp_cache[key] = smtp
+        return smtp
+
+    def _cached_sender(self, mail) -> str:
+        """送信者SMTP解決をキャッシュ付きで行う。"""
+        key = None
+        try:
+            key = getattr(mail, "SenderEmailAddress", None)
+        except Exception:  # noqa: BLE001
+            key = None
+        if key and key in self._smtp_cache:
+            return self._smtp_cache[key]
+        smtp = _sender_smtp(mail)
+        if key:
+            self._smtp_cache[key] = smtp
+        return smtp
 
     # -- 接続 ---------------------------------------------------------------
 
@@ -302,7 +335,7 @@ class Win32OutlookSource:
         to_unresolved = False
         try:
             for r in mail.Recipients:
-                smtp = _resolve_smtp(r.AddressEntry)
+                smtp = self._cached_smtp(r.AddressEntry)
                 rtype = getattr(r, "Type", 0)
                 if rtype == _OL_TO:
                     if _looks_like_smtp(smtp):
@@ -325,7 +358,7 @@ class Win32OutlookSource:
             store_id=getattr(getattr(mail, "Parent", None), "StoreID", "") or "",
             conversation_id=getattr(mail, "ConversationID", "") or "",
             subject=getattr(mail, "Subject", "") or "",
-            sender_email=_sender_smtp(mail),
+            sender_email=self._cached_sender(mail),
             sender_name=getattr(mail, "SenderName", "") or "",
             to_list=to_list,
             cc_list=cc_list,

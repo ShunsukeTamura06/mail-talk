@@ -7,20 +7,19 @@
 
 from __future__ import annotations
 
-import os
 import threading
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 
 from .aggregate import build_conversations
+from .config import get_config
 from .db import Database
 from .notify import log_debug, notify_user
 from .source import OutlookSource, get_default_source
 from .triage import classify_into
 
-# コールドスタート時にまず取り込む直近日数。これより古い分は準備完了後に裏で
-# 後追い補完する（§6: 直近から使える／古い分だけ読み込み中）。環境変数で調整可。
-COLD_WINDOW_DAYS = int(os.environ.get("MAILTALK_COLD_DAYS", "90"))
+# バッチコミット間隔（毎回commitせずN件ごとに確定して書き込みを高速化）。
+_COMMIT_EVERY = 200
 
 # ステート定数。
 STATE_STARTING = "starting"
@@ -126,25 +125,34 @@ class SyncManager:
             last = None if full else self.db.get_state("last_sync_time")
             is_cold = last is None  # 初回（or full）はキャッシュ無し
 
+            cold_days = get_config().cold_window_days
             if is_cold and not full:
                 # コールドスタート: まず直近ウィンドウだけ取り込んで「準備完了」に
                 # 近づけ、古い分は裏で後追いする（§6 プログレッシブ）。
-                window_start = datetime.now() - timedelta(days=COLD_WINDOW_DAYS)
+                window_start = datetime.now() - timedelta(days=cold_days)
                 self._set(STATE_SYNCING, processed=0, total=None,
-                          message=f"直近{COLD_WINDOW_DAYS}日のメールを読み込み中…")
+                          message=f"直近{cold_days}日のメールを読み込み中…")
                 n1, newest = self._fetch_range(
                     since=window_start, before=None,
-                    base_msg=f"直近{COLD_WINDOW_DAYS}日のメールを読み込み中…",
+                    base_msg=f"直近{cold_days}日のメールを読み込み中…",
                 )
                 if newest is not None:
                     self.db.set_state("last_sync_time", newest.isoformat())
                 count = self._classify_and_store()
+
+                if not get_config().backfill_old:
+                    # 設定でバックフィル無効 → 直近のみで完了（最速）。
+                    self._set(STATE_READY, processed=n1, total=n1,
+                              message=f"準備完了。{count}件の会話を仕分けしました（直近{cold_days}日）。")
+                    notify_user("info", f"準備完了。直近{cold_days}日分（{count}件）を仕分けしました。")
+                    return
+
                 # 仮の準備完了（古い分は裏で読み込み中）。
                 self._set(STATE_READY, processed=n1, total=n1,
-                          message=f"準備完了（直近{COLD_WINDOW_DAYS}日 {count}件）。古いメールを読み込み中…")
+                          message=f"準備完了（直近{cold_days}日 {count}件）。古いメールを読み込み中…")
                 notify_user(
                     "info",
-                    f"準備完了。まず直近{COLD_WINDOW_DAYS}日分（{count}件）を仕分けしました。古い分は裏で読み込みます。",
+                    f"準備完了。まず直近{cold_days}日分（{count}件）を仕分けしました。古い分は裏で読み込みます。",
                 )
 
                 # 古い分のバックフィル（state は READY のまま継続）。
@@ -208,12 +216,16 @@ class SyncManager:
         processed = 0
         newest: datetime | None = None
         for m in self.source.iter_messages(since=since, before=before):
-            self.db.upsert_email(m)
+            # commit=Falseで保留し、N件ごと＋最後にまとめてcommit（書き込み高速化）。
+            self.db.upsert_email(m, commit=False)
             processed += 1
             if newest is None or m.received_time > newest:
                 newest = m.received_time
+            if processed % _COMMIT_EVERY == 0:
+                self.db.commit()
             if processed % 50 == 0:
                 self._set(state, processed=processed, message=f"{base_msg} {processed}件")
+        self.db.commit()
         return processed, newest
 
     def _classify_and_store(self) -> int:
@@ -221,5 +233,6 @@ class SyncManager:
         convs = build_conversations(self.db.all_messages())
         for c in convs:
             classify_into(c)
-            self.db.upsert_conversation(c)
+            self.db.upsert_conversation(c, commit=False)
+        self.db.commit()
         return len(convs)

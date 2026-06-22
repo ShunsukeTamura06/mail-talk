@@ -149,6 +149,13 @@ def main() -> None:
     """
     import sys
 
+    from .config import ensure_config_file, get_config, reset_config
+
+    # 既定の設定ファイルを用意し、最新を読み込む（M端末で編集可能にする）。
+    ensure_config_file()
+    reset_config()
+    cfg = get_config()
+
     if "--diagnostics" in sys.argv:
         from .diagnostics import collect_diagnostics
 
@@ -162,10 +169,11 @@ def main() -> None:
 
     import uvicorn
 
-    url = f"http://{HOST}:{PORT}"
-    # サーバ起動直後にブラウザを開く（少し待ってから）。
-    threading.Timer(1.5, lambda: webbrowser.open(url)).start()
-    uvicorn.run(app, host=HOST, port=PORT)
+    url = f"http://{cfg.host}:{cfg.port}"
+    # サーバ起動直後にブラウザを開く（設定で無効化可）。
+    if cfg.open_browser:
+        threading.Timer(1.5, lambda: webbrowser.open(url)).start()
+    uvicorn.run(app, host=cfg.host, port=cfg.port)
 
 
 if __name__ == "__main__":

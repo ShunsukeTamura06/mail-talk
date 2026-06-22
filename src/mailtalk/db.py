@@ -93,13 +93,19 @@ class Database:
         """接続を閉じる。"""
         self.conn.close()
 
+    def commit(self) -> None:
+        """保留中の変更をコミットする（バッチ書き込みの確定用）。"""
+        self.conn.commit()
+
     # -- emails -------------------------------------------------------------
 
-    def upsert_email(self, m: Message) -> None:
+    def upsert_email(self, m: Message, commit: bool = True) -> None:
         """メール1件をUPSERTする。
 
         Args:
             m: 保存するメール。
+            commit: Falseでコミットを保留（バッチ書き込み高速化用。最後に
+                `commit()` を呼ぶこと）。
         """
         self.conn.execute(
             """
@@ -140,7 +146,8 @@ class Database:
                 datetime.now().isoformat(),
             ),
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
 
     def messages_for_conversation(self, conversation_id: str) -> list[Message]:
         """会話に属するメールを時系列（古い順）で返す。
@@ -164,11 +171,12 @@ class Database:
 
     # -- conversations ------------------------------------------------------
 
-    def upsert_conversation(self, c: Conversation) -> None:
+    def upsert_conversation(self, c: Conversation, commit: bool = True) -> None:
         """会話（集約＋レーン）をUPSERTする。
 
         Args:
             c: 保存する会話（`lane`/`lane_reason`確定済み）。
+            commit: Falseでコミットを保留（バッチ書き込み高速化用）。
         """
         self.conn.execute(
             """
@@ -201,7 +209,8 @@ class Database:
                 c.lane, c.lane_reason, datetime.now().isoformat(),
             ),
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
 
     def conversations(self, lane: str | None = None) -> list[dict]:
         """会話一覧をUI向けdictで返す（最終受信が新しい順）。

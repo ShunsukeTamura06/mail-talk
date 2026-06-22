@@ -21,6 +21,9 @@ logs/*.log
 logs/*.zip
 data/
 
+# 実行時の設定ファイル（端末ごとに編集。サンプルは config.sample.json を参照）
+config.json
+
 # PyInstaller（ビルド成果物。exeは共有フォルダ経由で配布しコミットしない）
 build/
 dist/
