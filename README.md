@@ -54,6 +54,8 @@ uv run pytest
 
 ### exeビルド（S端末）と実行（M端末）
 
+> 実機の詳細手順・トラブルシュートは [docs/DEPLOY_RUNBOOK.md](docs/DEPLOY_RUNBOOK.md) を参照。
+
 ```bash
 # S端末（Windows・Python）でビルド
 git pull
