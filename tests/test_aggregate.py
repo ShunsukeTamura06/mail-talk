@@ -81,3 +81,43 @@ def test_cc_only_signal():
     conv = build_conversations(msgs, now=now)[0]
     assert conv.i_am_to is False
     assert conv.i_am_cc_only is True
+
+
+def test_signals_use_latest_inbound_not_history():
+    # 過去はTo、最新の相手メールではCCのみ → i_am_toは最新基準でFalse。
+    now = datetime.now()
+    msgs = [
+        _m("old", "A", OTHER, [ME], [], 120, now),          # 昔はTo
+        _m("new", "A", OTHER, [OTHER], [ME], 10, now),       # 今はCCのみ
+    ]
+    conv = build_conversations(msgs, now=now)[0]
+    assert conv.i_am_to is False
+    assert conv.i_am_cc_only is True
+
+
+def test_latest_inbound_ignores_my_own_last_send():
+    # 最新が自分発でも、宛先信号は直近の「相手の発言」で見る。
+    now = datetime.now()
+    msgs = [
+        _m("in", "A", OTHER, [ME], [], 30, now),   # 相手→自分(To)
+        _m("out", "A", ME, [OTHER], [], 10, now),  # 自分が返信
+    ]
+    conv = build_conversations(msgs, now=now)[0]
+    assert conv.i_am_to is True          # 直近の相手発言は自分宛
+    assert conv.last_from_me is True     # ただし最後は自分→🔴にはならない
+
+
+def test_unresolved_to_leans_red():
+    # 配布リスト宛等でToが解決不能な相手メール → 安全側で i_am_to=True(🔴寄り)。
+    now = datetime.now()
+    m = Message(
+        entry_id="x", store_id="S", conversation_id="A",
+        subject="件名", sender_email=OTHER, sender_name=OTHER,
+        to_list=[], cc_list=[],
+        received_time=now - timedelta(minutes=5),
+        to_unresolved=True,
+    )
+    m.resolve_membership({ME})
+    assert m.is_to_me is False
+    conv = build_conversations([m], now=now)[0]
+    assert conv.i_am_to is True

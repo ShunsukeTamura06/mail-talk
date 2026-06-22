@@ -44,8 +44,18 @@ def build_conversation(
     ordered = sorted(messages, key=lambda m: m.received_time)
     last = ordered[-1]
 
-    i_am_to = any(m.is_to_me for m in ordered)
-    i_am_cc = any(m.is_cc_me for m in ordered)
+    # レーン判定の宛先信号は「いま返す相手の発言＝最新の相手メール」基準で計算する。
+    # 過去にToだっただけで🔴になるのを防ぐ（最新でCCのみなら🔴にしない）。相手の
+    # 発言が無ければ（全部自分発）最後のメールを基準にする（どのみち🔴にならない）。
+    inbound = [m for m in ordered if not m.is_from_me]
+    ref = inbound[-1] if inbound else last
+    # §9「To判別不能なら安全側＝🔴寄り」。解決不能Toは i_am_to 扱いに倒す。
+    ref_is_to = ref.is_to_me or ref.to_unresolved
+    i_am_to = ref_is_to
+    i_am_cc = ref.is_cc_me
+
+    # velocity_recentは直近ウィンドウ内の件数。NOTE(#5): 「往復」(送信者交代)では
+    # なく単純件数のため、連投も🟠になりうる。🟠は🔴の後段で最低リスクのためMVP許容。
     velocity_recent = sum(1 for m in ordered if m.received_time >= now - RECENT_WINDOW)
 
     subject_norm = next(

@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS emails (
   is_to_me         INTEGER,
   is_cc_me         INTEGER,
   is_from_me       INTEGER,
+  to_unresolved    INTEGER,
   body_preview     TEXT,
   body_html        TEXT,
   received_time    TEXT,
@@ -105,9 +106,9 @@ class Database:
             INSERT INTO emails (
               entry_id, store_id, conversation_id, subject, subject_norm,
               sender_email, sender_name, to_json, cc_json,
-              is_to_me, is_cc_me, is_from_me, body_preview, body_html,
+              is_to_me, is_cc_me, is_from_me, to_unresolved, body_preview, body_html,
               received_time, unread, importance, folder, synced_at
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(entry_id) DO UPDATE SET
               conversation_id=excluded.conversation_id,
               subject=excluded.subject,
@@ -119,6 +120,7 @@ class Database:
               is_to_me=excluded.is_to_me,
               is_cc_me=excluded.is_cc_me,
               is_from_me=excluded.is_from_me,
+              to_unresolved=excluded.to_unresolved,
               body_preview=excluded.body_preview,
               body_html=excluded.body_html,
               received_time=excluded.received_time,
@@ -132,6 +134,7 @@ class Database:
                 m.sender_email, m.sender_name,
                 json.dumps(m.to_list), json.dumps(m.cc_list),
                 int(m.is_to_me), int(m.is_cc_me), int(m.is_from_me),
+                int(m.to_unresolved),
                 m.body_preview, m.body_html,
                 m.received_time.isoformat(), int(m.unread), m.importance, m.folder,
                 datetime.now().isoformat(),
@@ -260,6 +263,7 @@ def _row_to_message(r: sqlite3.Row) -> Message:
     m.is_to_me = bool(r["is_to_me"])
     m.is_cc_me = bool(r["is_cc_me"])
     m.is_from_me = bool(r["is_from_me"])
+    m.to_unresolved = bool(r["to_unresolved"]) if "to_unresolved" in r.keys() else False
     return m
 
 

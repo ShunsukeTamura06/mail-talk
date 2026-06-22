@@ -74,6 +74,9 @@ class Message:
     is_to_me: bool = False
     is_cc_me: bool = False
     is_from_me: bool = False
+    # 宛先(To)に解決不能なものが含まれるか。配布リスト宛やEX→SMTP変換失敗で
+    # 「自分がToか判別不能」なケース。§9「迷ったら🔴寄り」のために保持する。
+    to_unresolved: bool = False
 
     def __post_init__(self) -> None:
         self.sender_email = normalize_email(self.sender_email)
