@@ -247,3 +247,38 @@ MVPで「読むのが楽」を達成・体感確認してから、上に積む:
 
 ### 持ち帰り最小化（会社端末←→開発機）
 - 会社端末でしか出ない COM 挙動の調査は `python -m mailtalk.cli --diagnostics` 一発で〔仕分け結果・所要時間・DN→SMTP変換失敗・環境情報〕を `logs/` にまとめる方針（シークレットは出さない）。
+
+---
+## 14. 配布・デプロイ（確定：exe on A端末・単一マシン）
+
+### 端末構成（実環境の制約）
+会社には2台あり、当初の「Python＋Outlook同一マシン」前提が崩れていた:
+- **A端末**: Outlookあり。**Pythonインタプリタは使えない**が、**未署名exeは起動可能**（確認済み）。**UIはこのA端末のブラウザで見る**。
+- **B端末**: Pythonが使える別端末。**Outlookは無い**。
+- A・Bはネットワーク接続。共有フォルダで読み書き可能。
+
+### 確定した解
+**アプリ全体をPyInstallerで単一exeに固め、A端末で実行する。** これにより
+Python・pywin32(win32com)・FastAPI/uvicorn・staticがexe内に揃い、Outlookと
+同一マシン(A端末)で動くため **win32comがそのまま使え、リアルタイム取得も返信
+(ReplyAll→Display)も成立する**。`source.get_default_source()` はWindowsで
+`Win32OutlookSource` を選ぶので、追加の分岐は不要。
+
+> 検討して**不採用**にした案: 共有フォルダ経由のJSON受け渡し（A端末でPS抽出→B端末で消費）。リアルタイム性が無く返信もできないため却下。PowerShell常駐HTTP案は、exeが起動可能と判明したため保留（exeが将来弾かれた場合の代替）。
+
+### 役割分担とフロー
+```
+このPC(mac) : 開発・純ロジック検証(Fake) → GitHub push
+B端末       : git pull → PyInstallerでビルド（mac不可なのでビルド機はB端末）
+              uv pip install -e ".[windows,build]" ; pyinstaller mailtalk.spec
+共有フォルダ : dist/MailTalk.exe をA端末へ受け渡し
+A端末       : MailTalk.exe をダブルクリック → 127.0.0.1:8765 が自動でブラウザに開く
+              → 閲覧・返信（Outlookはローカル＝同一マシン）
+```
+
+### exe化の要点（`mailtalk.spec` / `run_app.py` / `paths.py`）
+- **エントリ**: `run_app.py`（`multiprocessing.freeze_support()` 後に `main()`）。
+- **同梱**: `static/index.html` を datas で同梱。win32com/uvicorn/pydanticは動的importが多いので `collect_submodules` で明示収集。
+- **パス解決**: `paths.py` が frozen を判定し、読み取り専用リソース(static)は `sys._MEIPASS`、書き込み(data/logs)は **exeと同じフォルダ** に置く（exeの隣にDB・ログが溜まる＝診断・持ち帰りが容易）。
+- **起動UX**: `main()` が起動後に既定ブラウザで `127.0.0.1:8765` を自動オープン。`console=True` で接続状況・エラーをその場で確認可能。
+- **返信**: A端末ではローカルCOMなので §5 の `open_reply_draft`（ReplyAll→Display、`.Send()`禁止）がそのまま機能する。

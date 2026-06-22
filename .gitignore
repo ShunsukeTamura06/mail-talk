@@ -21,6 +21,11 @@ logs/*.log
 logs/*.zip
 data/
 
+# PyInstaller（ビルド成果物。exeは共有フォルダ経由で配布しコミットしない）
+build/
+dist/
+*.exe
+
 # OS
 .DS_Store
 Thumbs.db

@@ -14,6 +14,10 @@ dependencies = [
 windows = [
     "pywin32>=306",
 ]
+# exeビルド用（B端末＝ビルド機でのみ使用）。
+build = [
+    "pyinstaller>=6.0",
+]
 dev = [
     "pytest>=8.0",
 ]
