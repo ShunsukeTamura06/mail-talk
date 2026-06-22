@@ -7,15 +7,20 @@
 
 from __future__ import annotations
 
+import os
 import threading
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from .aggregate import build_conversations
 from .db import Database
 from .notify import log_debug, notify_user
 from .source import OutlookSource, get_default_source
 from .triage import classify_into
+
+# コールドスタート時にまず取り込む直近日数。これより古い分は準備完了後に裏で
+# 後追い補完する（§6: 直近から使える／古い分だけ読み込み中）。環境変数で調整可。
+COLD_WINDOW_DAYS = int(os.environ.get("MAILTALK_COLD_DAYS", "90"))
 
 # ステート定数。
 STATE_STARTING = "starting"
@@ -118,50 +123,61 @@ class SyncManager:
             if hasattr(self.source, "connect"):
                 self.source.connect()
 
-            # 2. 差分同期の起点を決める。
-            since = None
-            if not full:
-                last = self.db.get_state("last_sync_time")
-                if last:
-                    since = datetime.fromisoformat(last)
+            last = None if full else self.db.get_state("last_sync_time")
+            is_cold = last is None  # 初回（or full）はキャッシュ無し
+
+            if is_cold and not full:
+                # コールドスタート: まず直近ウィンドウだけ取り込んで「準備完了」に
+                # 近づけ、古い分は裏で後追いする（§6 プログレッシブ）。
+                window_start = datetime.now() - timedelta(days=COLD_WINDOW_DAYS)
+                self._set(STATE_SYNCING, processed=0, total=None,
+                          message=f"直近{COLD_WINDOW_DAYS}日のメールを読み込み中…")
+                n1, newest = self._fetch_range(
+                    since=window_start, before=None,
+                    base_msg=f"直近{COLD_WINDOW_DAYS}日のメールを読み込み中…",
+                )
+                if newest is not None:
+                    self.db.set_state("last_sync_time", newest.isoformat())
+                count = self._classify_and_store()
+                # 仮の準備完了（古い分は裏で読み込み中）。
+                self._set(STATE_READY, processed=n1, total=n1,
+                          message=f"準備完了（直近{COLD_WINDOW_DAYS}日 {count}件）。古いメールを読み込み中…")
+                notify_user(
+                    "info",
+                    f"準備完了。まず直近{COLD_WINDOW_DAYS}日分（{count}件）を仕分けしました。古い分は裏で読み込みます。",
+                )
+
+                # 古い分のバックフィル（state は READY のまま継続）。
+                n2, _ = self._fetch_range(
+                    since=None, before=window_start,
+                    base_msg="古いメールを読み込み中…", state=STATE_READY,
+                )
+                count = self._classify_and_store()
+                self.db.set_state("backfill_done", "1")
+                self._set(STATE_READY, processed=n1 + n2, total=n1 + n2,
+                          message=f"準備完了。{count}件の会話を仕分けしました。")
+                notify_user("info", f"全期間の読み込みが完了しました（{count}件の会話）。")
+            else:
+                # 差分同期（2回目以降）または全件再取得(full)。
+                since = None if full else datetime.fromisoformat(last)
+                if since is not None:
                     log_debug(f"差分同期: since={since.isoformat()}")
-
-            # 3. メール取得（新しい順）＋UPSERT。進捗を更新。
-            self._set(STATE_SYNCING, processed=0, total=None, message="メールを読み込み中…")
-            processed = 0
-            newest_seen: datetime | None = None
-            for m in self.source.iter_messages(since=since):
-                self.db.upsert_email(m)
-                processed += 1
-                if newest_seen is None or m.received_time > newest_seen:
-                    newest_seen = m.received_time
-                if processed % 50 == 0:
-                    self._set(STATE_SYNCING, processed=processed,
-                              message=f"メールを読み込み中… {processed}件")
-
-            # 4. 仕分け（全メールから会話を再構築）。
-            self._set(STATE_TRIAGING, processed=processed, message="会話を仕分け中…")
-            convs = build_conversations(self.db.all_messages())
-            for c in convs:
-                classify_into(c)
-                self.db.upsert_conversation(c)
-
-            # 5. 差分同期の起点を保存。
-            if newest_seen is not None:
-                self.db.set_state("last_sync_time", newest_seen.isoformat())
-            self.db.set_state("status", STATE_READY)
-
-            self._set(
-                STATE_READY,
-                processed=processed,
-                total=processed,
-                message=f"準備完了。{len(convs)}件の会話を仕分けしました。",
-            )
-            notify_user(
-                "info",
-                f"準備完了。{len(convs)}件の会話を仕分けしました。",
-                detail=f"新規/更新メール {processed}件",
-            )
+                self._set(STATE_SYNCING, processed=0, total=None,
+                          message="メールを読み込み中…")
+                processed, newest = self._fetch_range(
+                    since=since, before=None, base_msg="メールを読み込み中…"
+                )
+                if newest is not None:
+                    self.db.set_state("last_sync_time", newest.isoformat())
+                count = self._classify_and_store()
+                self.db.set_state("status", STATE_READY)
+                self._set(STATE_READY, processed=processed, total=processed,
+                          message=f"準備完了。{count}件の会話を仕分けしました。")
+                notify_user(
+                    "info",
+                    f"準備完了。{count}件の会話を仕分けしました。",
+                    detail=f"新規/更新メール {processed}件",
+                )
         except Exception as exc:  # noqa: BLE001 - 失敗は状態として可視化する
             self._set(STATE_ERROR, error=str(exc), message="読み込みに失敗しました。")
             notify_user(
@@ -169,3 +185,41 @@ class SyncManager:
                 "読み込みに失敗しました。Outlookが起動しているか確認してください。",
                 detail=repr(exc),
             )
+
+    def _fetch_range(
+        self,
+        *,
+        since: datetime | None,
+        before: datetime | None,
+        base_msg: str,
+        state: str = STATE_SYNCING,
+    ) -> tuple[int, datetime | None]:
+        """指定範囲のメールを取得してDBへUPSERTし、進捗を更新する。
+
+        Args:
+            since: この時刻より後のみ。
+            before: この時刻より前のみ（バックフィル用）。
+            base_msg: 進捗メッセージの接頭。
+            state: 進捗更新時に設定するステート（バックフィルは READY のまま）。
+
+        Returns:
+            (取得件数, 取得した中で最新の受信時刻)。
+        """
+        processed = 0
+        newest: datetime | None = None
+        for m in self.source.iter_messages(since=since, before=before):
+            self.db.upsert_email(m)
+            processed += 1
+            if newest is None or m.received_time > newest:
+                newest = m.received_time
+            if processed % 50 == 0:
+                self._set(state, processed=processed, message=f"{base_msg} {processed}件")
+        return processed, newest
+
+    def _classify_and_store(self) -> int:
+        """DB上の全メールから会話を再構築・仕分けして保存し、会話数を返す。"""
+        convs = build_conversations(self.db.all_messages())
+        for c in convs:
+            classify_into(c)
+            self.db.upsert_conversation(c)
+        return len(convs)

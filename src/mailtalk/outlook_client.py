@@ -216,7 +216,10 @@ class Win32OutlookSource:
         return addrs
 
     def iter_messages(
-        self, since: datetime | None = None, limit: int | None = None
+        self,
+        since: datetime | None = None,
+        before: datetime | None = None,
+        limit: int | None = None,
     ) -> Iterator[Message]:
         """受信トレイ＋送信済みのメールを新しい順で列挙する（CLAUDE.md §9d）。
 
@@ -224,6 +227,7 @@ class Win32OutlookSource:
 
         Args:
             since: この時刻より後のメールのみ（差分同期用）。
+            before: この時刻より前のメールのみ（古い分のバックフィル用）。
             limit: 取得上限（全フォルダ合計）。
 
         Yields:
@@ -239,24 +243,32 @@ class Win32OutlookSource:
             except Exception as exc:  # noqa: BLE001 - 1フォルダ失敗で全体を止めない
                 log_debug(f"フォルダ取得失敗 id={folder_id}: {exc!r}")
                 continue
-            for msg in self._iter_folder(folder, my, since):
+            for msg in self._iter_folder(folder, my, since, before):
                 yield msg
                 count += 1
                 if limit is not None and count >= limit:
                     return
 
     def _iter_folder(
-        self, folder, my: set[str], since: datetime | None
+        self,
+        folder,
+        my: set[str],
+        since: datetime | None,
+        before: datetime | None = None,
     ) -> Iterator[Message]:
         """1フォルダ内のメールを新しい順で列挙する（列挙の例外も握る、§9d）。"""
         folder_name = getattr(folder, "Name", "")
         try:
             items = folder.Items
             items.Sort("[ReceivedTime]", True)  # 新しい順
+            clauses = []
             if since is not None:
-                fmt = since.strftime("%m/%d/%Y %H:%M %p")
+                clauses.append(f"[ReceivedTime] > '{since.strftime('%m/%d/%Y %H:%M %p')}'")
+            if before is not None:
+                clauses.append(f"[ReceivedTime] < '{before.strftime('%m/%d/%Y %H:%M %p')}'")
+            if clauses:
                 try:
-                    items = items.Restrict(f"[ReceivedTime] > '{fmt}'")
+                    items = items.Restrict(" AND ".join(clauses))
                 except Exception as exc:  # noqa: BLE001
                     log_debug(f"Restrict失敗（全件にフォールバック）: {exc!r}")
         except Exception as exc:  # noqa: BLE001
@@ -318,8 +330,10 @@ class Win32OutlookSource:
             to_list=to_list,
             cc_list=cc_list,
             received_time=received_dt,
+            # 本文プレビューのみ取得。HTMLBodyは重い（COMで全文ロード）ので
+            # 列挙中は読まない（吹き出し表示はプレビューで足りる）。§8の遅延取得方針。
             body_preview=(getattr(mail, "Body", "") or "")[:500],
-            body_html=getattr(mail, "HTMLBody", "") or "",
+            body_html="",
             unread=bool(getattr(mail, "UnRead", False)),
             importance=int(getattr(mail, "Importance", 1) or 1),
             folder=folder,

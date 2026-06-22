@@ -128,7 +128,12 @@ async function poll() {
       bar.style.width = "100%";
     }
     await loadConversations();
-    if (s.state !== "ready" && s.state !== "error") {
+    if (s.state === "ready") {
+      // 準備完了後も低頻度で更新（古いメールの後追い・新着を反映）。
+      setTimeout(poll, 12000);
+    } else if (s.state === "error") {
+      setTimeout(poll, 8000);
+    } else {
       setTimeout(poll, 1500);
     }
   } catch (e) {

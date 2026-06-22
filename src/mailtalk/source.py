@@ -24,12 +24,16 @@ class OutlookSource(Protocol):
         ...
 
     def iter_messages(
-        self, since: datetime | None = None, limit: int | None = None
+        self,
+        since: datetime | None = None,
+        before: datetime | None = None,
+        limit: int | None = None,
     ) -> Iterator[Message]:
         """メールを新しい順で列挙する。
 
         Args:
-            since: この時刻より後のメールのみ（差分同期用）。Noneで全件。
+            since: この時刻より後のメールのみ（差分同期用）。Noneで下限なし。
+            before: この時刻より前のメールのみ（古い分のバックフィル用）。Noneで上限なし。
             limit: 取得上限。Noneで無制限。
         """
         ...

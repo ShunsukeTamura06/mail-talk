@@ -122,18 +122,24 @@ class FakeOutlookSource:
         return {ME}
 
     def iter_messages(
-        self, since: datetime | None = None, limit: int | None = None
+        self,
+        since: datetime | None = None,
+        before: datetime | None = None,
+        limit: int | None = None,
     ) -> Iterator[Message]:
         """合成メールを新しい順で列挙する。
 
         Args:
             since: この時刻より後のみ（差分同期の挙動を模倣）。
+            before: この時刻より前のみ（バックフィルの挙動を模倣）。
             limit: 取得上限。
         """
         ordered = sorted(self._messages, key=lambda m: m.received_time, reverse=True)
         count = 0
         for m in ordered:
             if since is not None and m.received_time <= since:
+                continue
+            if before is not None and m.received_time >= before:
                 continue
             yield m
             count += 1
