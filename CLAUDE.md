@@ -248,6 +248,15 @@ MVPで「読むのが楽」を達成・体感確認してから、上に積む:
 ### 持ち帰り最小化（会社端末←→開発機）
 - 会社端末でしか出ない COM 挙動の調査は `python -m mailtalk.cli --diagnostics` 一発で〔仕分け結果・所要時間・DN→SMTP変換失敗・環境情報〕を `logs/` にまとめる方針（シークレットは出さない）。
 
+### レビュー反映済みの精度仕様（🔴の正確さに直結・変更不可）
+codexレビューを受けて以下を確定。triageのカスケード自体は §3 のままだが、入力信号の作り方を厳密化した:
+- **送信済みも取得する**: `outlook_client` は受信トレイ＋送信済み(olFolderSentMail=5)を読む。これがないと返信済みでも `last_from_me=False` になり🔴に残る（痛み④を取りこぼす）。
+- **宛先信号は「最新の相手メール」基準**: `aggregate` は会話の最後の相手発言(=いま返す相手)を基準に `i_am_to`/`i_am_cc_only` を計算する。過去にToだっただけで🔴にしない。
+- **解決不能Toは🔴寄り（§9準拠）**: 配布リスト宛やEX→SMTP変換失敗のToは `Message.to_unresolved=True` とし、`i_am_to` 扱いに倒す。EX解決は GetExchangeUser→PropertyAccessor(PR_SMTP_ADDRESS)→Address の順でフォールバック。
+- **自分アドレス空は明示失敗**: `my_addresses()` が空なら黙って継続せずエラー停止（is_from_me/is_to_me全滅による🔴全滅を防ぐ）。
+- **列挙の例外で全体を止めない**: GetFirst/GetNext を含めフォルダ列挙を例外保護（§9d）。
+- **未対応（許容・将来）**: `velocity_recent` は単純件数で「往復(送信者交代)」を見ていない。🟠は🔴の後段で最低リスクのためMVP許容、実データで閾値/指標を調整する。
+
 ---
 ## 14. 配布・デプロイ（確定：exe on A端末・単一マシン）
 
