@@ -8,6 +8,7 @@ A端末ではPyInstallerで固めた単一exeとして動かす（CLAUDE.md §14
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -17,14 +18,39 @@ def is_frozen() -> bool:
     return bool(getattr(sys, "frozen", False))
 
 
+def _is_writable(d: Path) -> bool:
+    """ディレクトリに書き込めるか実際に試す。"""
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+        probe = d / ".write_test"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _local_appdata_dir() -> Path:
+    """%LOCALAPPDATA%/MailTalk（無ければホーム配下）を返す。"""
+    base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
+    root = Path(base) if base else Path.home()
+    return root / "MailTalk"
+
+
 def base_writable_dir() -> Path:
     """書き込み可能な基準ディレクトリを返す。
 
+    frozen時はまずexeの隣を試し、書き込めなければ（読み取り専用フォルダや
+    共有フォルダ上での起動）%LOCALAPPDATA%/MailTalk へフォールバックする。
+
     Returns:
-        frozen時はexeのあるフォルダ、通常実行時はリポジトリルート。
+        書き込み可能な基準ディレクトリ。通常実行時はリポジトリルート。
     """
     if is_frozen():
-        return Path(sys.executable).resolve().parent
+        beside_exe = Path(sys.executable).resolve().parent
+        if _is_writable(beside_exe):
+            return beside_exe
+        return _local_appdata_dir()
     return Path(__file__).resolve().parents[2]
 
 

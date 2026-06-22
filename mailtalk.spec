@@ -17,22 +17,19 @@ hiddenimports = (
     + collect_submodules("fastapi")
     + collect_submodules("pydantic")
     + collect_submodules("anyio")
+    + collect_submodules("win32com")
     + [
-        "win32com",
-        "win32com.client",
         "win32timezone",
         "pythoncom",
         "pywintypes",
     ]
 )
 
-datas = [("src/mailtalk/static/index.html", "static")]
-
 a = Analysis(
     ["run_app.py"],
     pathex=["src"],
     binaries=[],
-    datas=datas,
+    datas=[],
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
@@ -40,6 +37,9 @@ a = Analysis(
     excludes=["tkinter", "matplotlib", "numpy"],
     noarchive=False,
 )
+
+# static配下を丸ごと同梱（将来CSS/JS/画像を分割しても欠落しない）。
+a.datas += Tree("src/mailtalk/static", prefix="static")
 
 pyz = PYZ(a.pure)
 
