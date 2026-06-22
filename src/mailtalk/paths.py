@@ -1,6 +1,6 @@
 """実行形態（通常実行 / PyInstaller exe）に応じたパス解決。
 
-A端末ではPyInstallerで固めた単一exeとして動かす（CLAUDE.md §14）。frozen時は:
+M端末ではPyInstallerで固めた単一exeとして動かす（CLAUDE.md §14）。frozen時は:
 - 読み取り専用の同梱リソース(static)は `sys._MEIPASS` から読む。
 - 書き込み先(data/logs)はexeと同じフォルダに置く（共有フォルダから持ち込んだ
   exeの隣にDB・ログが溜まる＝持ち帰り・診断がしやすい）。
