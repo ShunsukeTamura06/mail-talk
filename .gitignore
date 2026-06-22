@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# uv
+.uv/
+
+# tooling
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# アプリ生成物（メール内容を含むため絶対にコミットしない）
+*.db
+*.sqlite
+*.sqlite3
+logs/*.log
+logs/*.zip
+data/
+
+# OS
+.DS_Store
+Thumbs.db
