@@ -5,22 +5,21 @@
 ための最小ツール。macOSではFakeデータで動作する。
 
 使い方:
-    uv run mailtalk                 # 会話一覧をレーン別に表示
-    uv run mailtalk --limit 200     # 取得上限を指定
-    uv run mailtalk --diagnostics   # 診断バンドル（持ち帰り最小化）を logs/ へ
+    uv run mailtalk                         # 会話一覧をレーン別に表示
+    uv run mailtalk --limit 200             # 取得上限を指定
+    uv run mailtalk --diagnostics           # 診断バンドル(zip)を logs/ へ
+    uv run mailtalk --diagnostics --redact  # アドレス・件名をマスクして収集
 """
 
 from __future__ import annotations
 
 import argparse
-import platform
-import sys
 import time
-from datetime import datetime
 
 from .aggregate import build_conversations
+from .diagnostics import collect_diagnostics
 from .models import LANE_LABELS, LANE_ORDER
-from .notify import log_debug, notify_user
+from .notify import log_debug
 from .source import get_default_source
 from .triage import classify_into
 
@@ -74,25 +73,20 @@ def _print_lanes(convs: list) -> None:
     print()
 
 
-def _run_diagnostics(limit: int | None) -> None:
-    """診断情報を logs/ に出力する（会社端末からの持ち帰り最小化用）。
+def _run_diagnostics(limit: int | None, redact: bool) -> None:
+    """診断バンドル(zip)を出力する（会社端末からの持ち帰り最小化用）。
 
-    シークレット（アドレスの実値以外の機密）は出さない。
+    Args:
+        limit: 取得上限。
+        redact: Trueでアドレス・件名をマスクして収集する。
     """
-    notify_user("info", "診断モードを開始します。")
-    log_debug("=== 診断バンドル ===")
-    log_debug(f"platform={platform.platform()} python={sys.version.split()[0]}")
-    log_debug(f"started_at={datetime.now().isoformat()}")
-    t0 = time.perf_counter()
-    convs = _load_classified(limit)
-    counts = {lane: 0 for lane in LANE_ORDER}
-    for c in convs:
-        counts[c.lane] += 1
-    log_debug(f"会話数={len(convs)} 内訳={counts} 所要={time.perf_counter() - t0:.2f}s")
-    notify_user(
-        "info",
-        f"診断完了。{len(convs)}会話を仕分けしました（内訳 {counts}）。logs/app.log を確認してください。",
-    )
+    print("診断バンドルを収集しています…")
+    zip_path = collect_diagnostics(limit=limit, redact=redact)
+    print(f"\n診断完了。次のzipをこのPCへ持ち帰ってください:\n  {zip_path}")
+    if redact:
+        print("（--redact: アドレス・件名はマスク済み）")
+    else:
+        print("（メール本文は含みません。アドレス・件名を隠すには --redact）")
 
 
 def main() -> None:
@@ -100,12 +94,15 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="MailTalk コンソール検証ツール")
     parser.add_argument("--limit", type=int, default=None, help="取得上限件数")
     parser.add_argument(
-        "--diagnostics", action="store_true", help="診断バンドルを logs/ へ出力"
+        "--diagnostics", action="store_true", help="診断バンドル(zip)を logs/ へ出力"
+    )
+    parser.add_argument(
+        "--redact", action="store_true", help="診断時にアドレス・件名をマスク"
     )
     args = parser.parse_args()
 
     if args.diagnostics:
-        _run_diagnostics(args.limit)
+        _run_diagnostics(args.limit, args.redact)
         return
 
     convs = _load_classified(args.limit)
