@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from mailtalk.config import Config, ensure_config_file, load_config
+from mailtalk.config import Config, enforce_loopback, ensure_config_file, load_config
 
 
 def test_defaults_when_no_file(tmp_path):
@@ -35,6 +35,19 @@ def test_unknown_keys_ignored_and_bad_types_fallback(tmp_path):
     )
     cfg = load_config(p)
     assert cfg.cold_window_days == 90  # 不正な型は既定にフォールバック
+
+
+def test_enforce_loopback_blocks_external_hosts():
+    # ループバックはそのまま通す。
+    assert enforce_loopback("127.0.0.1") == "127.0.0.1"
+    assert enforce_loopback("127.0.0.5") == "127.0.0.5"
+    assert enforce_loopback("localhost") == "localhost"
+    assert enforce_loopback("::1") == "::1"
+    # 外部公開につながる指定は 127.0.0.1 へ強制。
+    assert enforce_loopback("0.0.0.0") == "127.0.0.1"
+    assert enforce_loopback("192.168.1.10") == "127.0.0.1"
+    assert enforce_loopback("") == "127.0.0.1"
+    assert enforce_loopback("example.com") == "127.0.0.1"
 
 
 def test_ensure_creates_file_without_overwriting(tmp_path):

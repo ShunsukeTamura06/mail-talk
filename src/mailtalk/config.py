@@ -95,6 +95,26 @@ def ensure_config_file(path=None) -> None:
         log_debug(f"config生成失敗: {exc!r}")
 
 
+# ループバック（同一マシン内のみ到達可能）と認めるホスト。これ以外は外部公開に
+# つながりうるため、設定で指定されても 127.0.0.1 へ強制する（職場ポリシー §1）。
+_LOOPBACK_NAMES = {"localhost", "::1"}
+
+
+def enforce_loopback(host: str) -> str:
+    """外部公開を防ぐため、ループバック以外のホスト指定を 127.0.0.1 へ丸める。
+
+    Args:
+        host: 設定されたホスト。
+
+    Returns:
+        ループバックなら元の値、そうでなければ "127.0.0.1"。
+    """
+    h = (host or "").strip().lower()
+    if h in _LOOPBACK_NAMES or h.startswith("127."):
+        return host
+    return "127.0.0.1"
+
+
 def get_config() -> Config:
     """現在の設定を返す（初回に読み込み、以後キャッシュ）。"""
     global _config

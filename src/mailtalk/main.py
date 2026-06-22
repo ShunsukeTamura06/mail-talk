@@ -149,12 +149,22 @@ def main() -> None:
     """
     import sys
 
-    from .config import ensure_config_file, get_config, reset_config
+    from .config import ensure_config_file, enforce_loopback, get_config, reset_config
+    from .notify import notify_user
 
     # 既定の設定ファイルを用意し、最新を読み込む（M端末で編集可能にする）。
     ensure_config_file()
     reset_config()
     cfg = get_config()
+
+    # 外部公開を不可能にする: 設定でループバック以外を指定されても強制的に丸める。
+    host = enforce_loopback(cfg.host)
+    if host != cfg.host:
+        notify_user(
+            "warn",
+            "外部公開は許可されていません。待受をローカル(127.0.0.1)に強制しました。",
+            detail=f"config.host={cfg.host!r} → {host!r}",
+        )
 
     if "--diagnostics" in sys.argv:
         from .diagnostics import collect_diagnostics
@@ -169,11 +179,12 @@ def main() -> None:
 
     import uvicorn
 
-    url = f"http://{cfg.host}:{cfg.port}"
+    url = f"http://{host}:{cfg.port}"
     # サーバ起動直後にブラウザを開く（設定で無効化可）。
     if cfg.open_browser:
         threading.Timer(1.5, lambda: webbrowser.open(url)).start()
-    uvicorn.run(app, host=cfg.host, port=cfg.port)
+    # host はループバックに強制済み（外部からは到達不可）。
+    uvicorn.run(app, host=host, port=cfg.port)
 
 
 if __name__ == "__main__":
