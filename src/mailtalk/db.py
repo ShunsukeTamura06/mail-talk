@@ -13,9 +13,10 @@ from datetime import datetime
 from pathlib import Path
 
 from .models import Conversation, Message
+from .paths import data_dir
 
-# 既定のDBパス。リポジトリルート直下の data/。
-DEFAULT_DB_PATH = Path(__file__).resolve().parents[2] / "data" / "mailtalk.db"
+# 既定のDBパス。通常実行はリポジトリ直下、exe実行時はexeの隣の data/。
+DEFAULT_DB_PATH = data_dir() / "mailtalk.db"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS emails (

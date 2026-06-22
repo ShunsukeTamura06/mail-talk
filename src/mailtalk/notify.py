@@ -15,10 +15,11 @@ from collections import deque
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
-from pathlib import Path
 
-# ログ出力先。リポジトリルート直下の logs/。
-_LOG_DIR = Path(__file__).resolve().parents[2] / "logs"
+from .paths import logs_dir
+
+# ログ出力先。通常実行はリポジトリ直下、exe実行時はexeの隣の logs/。
+_LOG_DIR = logs_dir()
 _LOG_FILE = _LOG_DIR / "app.log"
 
 _USER_LEVELS = ("info", "warn", "error")

@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
@@ -24,11 +23,16 @@ from pydantic import BaseModel
 
 from .db import Database
 from .notify import get_user_messages
+from .paths import static_dir
 from .reply import open_reply_for_conversation
 from .source import get_default_source
 from .sync import SyncManager
 
-_STATIC_DIR = Path(__file__).resolve().parent / "static"
+# ローカル限定の待受設定。
+HOST = "127.0.0.1"
+PORT = 8765
+
+_STATIC_DIR = static_dir()
 
 # アプリ全体で共有する状態。
 _db = Database()
@@ -120,10 +124,20 @@ if _STATIC_DIR.exists():
 
 
 def main() -> None:
-    """uvicornでローカル限定起動する。"""
+    """uvicornでローカル限定起動し、既定ブラウザでUIを開く。
+
+    A端末ではexeをダブルクリックするだけで使えるよう、起動後に自動で
+    ブラウザを開く。待受は127.0.0.1固定（外部公開しない）。
+    """
+    import threading
+    import webbrowser
+
     import uvicorn
 
-    uvicorn.run(app, host="127.0.0.1", port=8765)
+    url = f"http://{HOST}:{PORT}"
+    # サーバ起動直後にブラウザを開く（少し待ってから）。
+    threading.Timer(1.5, lambda: webbrowser.open(url)).start()
+    uvicorn.run(app, host=HOST, port=PORT)
 
 
 if __name__ == "__main__":
