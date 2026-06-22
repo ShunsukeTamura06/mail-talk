@@ -26,6 +26,9 @@ build/
 dist/
 *.exe
 
+# codexレビュー等の一時成果物
+.review/
+
 # OS
 .DS_Store
 Thumbs.db
