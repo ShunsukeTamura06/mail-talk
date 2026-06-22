@@ -22,36 +22,85 @@ _OL_TO = 1
 _OL_CC = 2
 _OL_BCC = 3
 
-# 既定の取得対象フォルダ（受信トレイ）。olFolderInbox = 6。
+# 取得対象フォルダ。olFolderInbox=6, olFolderSentMail=5。
+# Sent Itemsも読むのは「最後の発言が自分か（返信済みか）」を正しく判定するため
+# （受信トレイだけだと返信済みでも🔴のまま＝痛み④を取りこぼす）。
 _OL_FOLDER_INBOX = 6
+_OL_FOLDER_SENTMAIL = 5
+
+# MAPIプロパティタグ（PropertyAccessor用フォールバック）。
+_PR_SMTP_ADDRESS = "http://schemas.microsoft.com/mapi/proptag/0x39FE001E"
+_PR_SENDER_SMTP_ADDRESS = "http://schemas.microsoft.com/mapi/proptag/0x5D01001E"
+
+
+def _looks_like_smtp(addr: str) -> bool:
+    """SMTPアドレスらしい文字列か（EXのDN "/o=..." を除外する）。"""
+    return "@" in addr and not addr.startswith("/")
+
+
+def _coerce_time(mail) -> datetime:
+    """メールの時刻を取得する。ReceivedTime優先、無ければSentOn（送信済み対策）。
+
+    Args:
+        mail: COMの`MailItem`。
+
+    Returns:
+        naiveなdatetime（他レイヤーと揃える）。両方失敗時は現在時刻。
+    """
+    for attr in ("ReceivedTime", "SentOn"):
+        try:
+            t = getattr(mail, attr)
+            return datetime(t.year, t.month, t.day, t.hour, t.minute, t.second)
+        except Exception:  # noqa: BLE001
+            continue
+    return datetime.now()
 
 
 def _resolve_smtp(address_entry) -> str:
-    """AddressEntry から SMTP アドレスを解決する（EXならExchangeUser経由）。
+    """AddressEntry から SMTP アドレスを解決する（CLAUDE.md §9b）。
+
+    EXユーザーは GetExchangeUser → PropertyAccessor(PR_SMTP_ADDRESS) の順で
+    試し、それでも解決できなければ Address（DNのことがある）を返す。返り値が
+    SMTPらしいかの最終判定は呼び出し側で `_looks_like_smtp` で行う。
 
     Args:
         address_entry: COMの`AddressEntry`オブジェクト。
 
     Returns:
-        小文字正規化済みSMTPアドレス。解決失敗時は取得できた文字列か空。
+        小文字正規化済みアドレス。解決不能時はDN文字列または空。
     """
     if address_entry is None:
         return ""
     try:
-        addr_type = getattr(address_entry, "Type", "")
-        if addr_type == "EX":
-            exu = address_entry.GetExchangeUser()
-            if exu is not None:
-                return normalize_email(exu.PrimarySmtpAddress)
-        smtp = getattr(address_entry, "Address", "")
-        return normalize_email(smtp)
+        if getattr(address_entry, "Type", "") == "EX":
+            try:
+                exu = address_entry.GetExchangeUser()
+                if exu is not None:
+                    smtp = normalize_email(exu.PrimarySmtpAddress)
+                    if _looks_like_smtp(smtp):
+                        return smtp
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                smtp = normalize_email(
+                    address_entry.PropertyAccessor.GetProperty(_PR_SMTP_ADDRESS)
+                )
+                if _looks_like_smtp(smtp):
+                    return smtp
+            except Exception:  # noqa: BLE001
+                pass
+            # 配布リスト等はSMTPを持たないことがある。DN等をそのまま返す。
+        return normalize_email(getattr(address_entry, "Address", ""))
     except Exception as exc:  # noqa: BLE001 - COMの多様な例外を握る
         log_debug(f"resolve_smtp失敗: {exc!r}")
         return ""
 
 
 def _sender_smtp(mail) -> str:
-    """メールの送信者SMTPを解決する（EX形式DNを正しくSMTPへ）。
+    """メールの送信者SMTPを解決する（EX形式DNを正しくSMTPへ、§9a）。
+
+    GetExchangeUser → PropertyAccessor(PR_SENDER_SMTP_ADDRESS) →
+    SenderEmailAddress の順にフォールバックする。
 
     Args:
         mail: COMの`MailItem`。
@@ -62,11 +111,22 @@ def _sender_smtp(mail) -> str:
     try:
         if getattr(mail, "SenderEmailType", "") == "EX":
             try:
-                return normalize_email(
+                smtp = normalize_email(
                     mail.Sender.GetExchangeUser().PrimarySmtpAddress
                 )
+                if _looks_like_smtp(smtp):
+                    return smtp
             except Exception:  # noqa: BLE001
-                return normalize_email(getattr(mail, "SenderEmailAddress", ""))
+                pass
+            try:
+                smtp = normalize_email(
+                    mail.PropertyAccessor.GetProperty(_PR_SENDER_SMTP_ADDRESS)
+                )
+                if _looks_like_smtp(smtp):
+                    return smtp
+            except Exception:  # noqa: BLE001
+                pass
+            return normalize_email(getattr(mail, "SenderEmailAddress", ""))
         return normalize_email(getattr(mail, "SenderEmailAddress", ""))
     except Exception as exc:  # noqa: BLE001
         log_debug(f"sender_smtp失敗: {exc!r}")
@@ -142,6 +202,15 @@ class Win32OutlookSource:
                     addrs.add(normalize_email(smtp))
         except Exception as exc:  # noqa: BLE001
             log_debug(f"Accounts列挙失敗: {exc!r}")
+        if not addrs:
+            # 自分のアドレスが1つも取れないと is_from_me/is_to_me が全滅し、
+            # 🔴判定の再現率がゼロになる。黙って続けず明示的に失敗させる（§7）。
+            notify_user(
+                "error",
+                "あなたのメールアドレスを特定できませんでした。Outlookのアカウント設定を確認してください。",
+                detail="my_addresses() が空。CurrentUser/Accounts いずれもSMTP解決不可。",
+            )
+            raise RuntimeError("自分のSMTPアドレスを特定できませんでした。")
         self._my_addrs = addrs
         log_debug(f"自分のアドレス: {sorted(addrs)}")
         return addrs
@@ -149,68 +218,95 @@ class Win32OutlookSource:
     def iter_messages(
         self, since: datetime | None = None, limit: int | None = None
     ) -> Iterator[Message]:
-        """受信トレイのメールを新しい順で列挙する（CLAUDE.md §9d）。
+        """受信トレイ＋送信済みのメールを新しい順で列挙する（CLAUDE.md §9d）。
+
+        送信済みも読むことで「最後の発言が自分か（返信済みか）」を正しく判定する。
 
         Args:
             since: この時刻より後のメールのみ（差分同期用）。
-            limit: 取得上限。
+            limit: 取得上限（全フォルダ合計）。
 
         Yields:
             正規化・メンバーシップ解決済みの `Message`。
         """
         ns = self._require_ns()
         my = self.my_addresses()
-        inbox = ns.GetDefaultFolder(_OL_FOLDER_INBOX)
-        items = inbox.Items
-        items.Sort("[ReceivedTime]", True)  # 新しい順
-
-        if since is not None:
-            # Restrictで対象期間を絞ってから回す（大量メール対策）。
-            fmt = since.strftime("%m/%d/%Y %H:%M %p")
-            try:
-                items = items.Restrict(f"[ReceivedTime] > '{fmt}'")
-            except Exception as exc:  # noqa: BLE001
-                log_debug(f"Restrict失敗（全件にフォールバック）: {exc!r}")
 
         count = 0
-        item = items.GetFirst()
+        for folder_id in (_OL_FOLDER_INBOX, _OL_FOLDER_SENTMAIL):
+            try:
+                folder = ns.GetDefaultFolder(folder_id)
+            except Exception as exc:  # noqa: BLE001 - 1フォルダ失敗で全体を止めない
+                log_debug(f"フォルダ取得失敗 id={folder_id}: {exc!r}")
+                continue
+            for msg in self._iter_folder(folder, my, since):
+                yield msg
+                count += 1
+                if limit is not None and count >= limit:
+                    return
+
+    def _iter_folder(
+        self, folder, my: set[str], since: datetime | None
+    ) -> Iterator[Message]:
+        """1フォルダ内のメールを新しい順で列挙する（列挙の例外も握る、§9d）。"""
+        folder_name = getattr(folder, "Name", "")
+        try:
+            items = folder.Items
+            items.Sort("[ReceivedTime]", True)  # 新しい順
+            if since is not None:
+                fmt = since.strftime("%m/%d/%Y %H:%M %p")
+                try:
+                    items = items.Restrict(f"[ReceivedTime] > '{fmt}'")
+                except Exception as exc:  # noqa: BLE001
+                    log_debug(f"Restrict失敗（全件にフォールバック）: {exc!r}")
+        except Exception as exc:  # noqa: BLE001
+            log_debug(f"Items取得失敗 folder={folder_name}: {exc!r}")
+            return
+
+        try:
+            item = items.GetFirst()
+        except Exception as exc:  # noqa: BLE001 - GetFirstで死なない
+            log_debug(f"GetFirst失敗 folder={folder_name}: {exc!r}")
+            return
+
         while item is not None:
             try:
                 if getattr(item, "Class", None) == 43:  # olMail
-                    msg = self._to_message(item, my, folder=inbox.Name)
+                    msg = self._to_message(item, my, folder=folder_name)
                     if msg is not None:
                         yield msg
-                        count += 1
-                        if limit is not None and count >= limit:
-                            return
             except Exception as exc:  # noqa: BLE001 - 1通の失敗で全体を止めない
                 log_debug(f"メール変換失敗（スキップ）: {exc!r}")
-            item = items.GetNext()
+            try:
+                item = items.GetNext()  # GetNextの例外でも全体を止めない（§9d）
+            except Exception as exc:  # noqa: BLE001
+                log_debug(f"GetNext失敗 folder={folder_name}: {exc!r}")
+                break
 
     def _to_message(self, mail, my: set[str], folder: str) -> Message | None:
         """COMの`MailItem`を`Message`へ正規化する。"""
         to_list: list[str] = []
         cc_list: list[str] = []
+        to_unresolved = False
         try:
             for r in mail.Recipients:
                 smtp = _resolve_smtp(r.AddressEntry)
-                if not smtp:
-                    continue
-                if r.Type == _OL_TO:
-                    to_list.append(smtp)
-                elif r.Type == _OL_CC:
+                rtype = getattr(r, "Type", 0)
+                if rtype == _OL_TO:
+                    if _looks_like_smtp(smtp):
+                        to_list.append(smtp)
+                    else:
+                        # 解決不能なTo（配布リスト/EX変換失敗）。§9「迷ったら🔴寄り」
+                        # のため、自分宛か判別不能としてフラグを立てる。
+                        to_unresolved = True
+                        log_debug(f"To解決不能: {smtp!r}")
+                elif rtype == _OL_CC and _looks_like_smtp(smtp):
                     cc_list.append(smtp)
         except Exception as exc:  # noqa: BLE001
             log_debug(f"Recipients解決失敗: {exc!r}")
+            to_unresolved = True  # 解決処理ごと失敗→安全側に倒す
 
-        try:
-            received = mail.ReceivedTime
-            received_dt = datetime(
-                received.year, received.month, received.day,
-                received.hour, received.minute, received.second,
-            )
-        except Exception:  # noqa: BLE001
-            received_dt = datetime.now()
+        received_dt = _coerce_time(mail)
 
         msg = Message(
             entry_id=getattr(mail, "EntryID", ""),
@@ -227,6 +323,7 @@ class Win32OutlookSource:
             unread=bool(getattr(mail, "UnRead", False)),
             importance=int(getattr(mail, "Importance", 1) or 1),
             folder=folder,
+            to_unresolved=to_unresolved,
         )
         msg.resolve_membership(my)
         return msg
