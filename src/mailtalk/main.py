@@ -10,6 +10,7 @@
 - GET  /api/conversations/{cid}/messages … 吹き出し用メール（時系列）
 - POST /api/conversations/{cid}/reply … 全員返信の下書きをOutlookで開く
 - POST /api/sync                      … 同期を手動トリガ（{"full": true}で全件）
+- POST /api/diagnostics               … 診断バンドル(zip)を作成しパスを返す
 """
 
 from __future__ import annotations
@@ -112,6 +113,19 @@ def api_sync(req: SyncRequest) -> dict:
     return {"ok": True, "status": _sync.status()}
 
 
+@app.post("/api/diagnostics")
+def api_diagnostics(redact: bool = False) -> dict:
+    """診断バンドル(zip)を作成し、保存先パスを返す（M端末からの持ち帰り用）。
+
+    Args:
+        redact: Trueでアドレス・件名をマスクして収集する。
+    """
+    from .diagnostics import collect_diagnostics
+
+    path = collect_diagnostics(_source, redact=redact)
+    return {"ok": True, "path": str(path)}
+
+
 @app.get("/")
 def index() -> FileResponse:
     """チャットUIを返す。"""
@@ -128,7 +142,21 @@ def main() -> None:
 
     M端末ではexeをダブルクリックするだけで使えるよう、起動後に自動で
     ブラウザを開く。待受は127.0.0.1固定（外部公開しない）。
+
+    `MailTalk.exe --diagnostics [--redact]` のように起動した場合はサーバを
+    立てず、診断バンドル(zip)だけ作って終了する（M端末でPython無しでも
+    持ち帰り用zipを作れるようにするため）。
     """
+    import sys
+
+    if "--diagnostics" in sys.argv:
+        from .diagnostics import collect_diagnostics
+
+        redact = "--redact" in sys.argv
+        path = collect_diagnostics(_source, redact=redact)
+        print(f"\n診断バンドルを作成しました。このPCへ持ち帰ってください:\n  {path}")
+        return
+
     import threading
     import webbrowser
 
