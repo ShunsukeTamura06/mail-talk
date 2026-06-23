@@ -14,7 +14,7 @@ import time
 from datetime import datetime
 from typing import Iterator
 
-from .models import Message, normalize_email
+from .models import Message, clean_body, normalize_email
 from .notify import log_debug, notify_user
 
 # Recipients.Type の定数（win32com非依存で持っておく）。
@@ -235,6 +235,22 @@ class Win32OutlookSource:
                     addrs.add(normalize_email(smtp))
         except Exception as exc:  # noqa: BLE001
             log_debug(f"Accounts列挙失敗: {exc!r}")
+        # 自分のEX(Exchange DN)も集める。SMTP変換が失敗する環境でも、宛先のDN同士で
+        # 「自分がToか」を判定できるようにする（🔴判定の堅牢化）。
+        try:
+            cu = ns.CurrentUser
+            for getter in (
+                lambda: cu.Address,
+                lambda: cu.AddressEntry.Address,
+            ):
+                try:
+                    dn = normalize_email(getter())
+                    if dn:
+                        addrs.add(dn)
+                except Exception:  # noqa: BLE001
+                    pass
+        except Exception as exc:  # noqa: BLE001
+            log_debug(f"CurrentUserのDN取得失敗: {exc!r}")
         if not addrs:
             # 自分のアドレスが1つも取れないと is_from_me/is_to_me が全滅し、
             # 🔴判定の再現率がゼロになる。黙って続けず明示的に失敗させる（§7）。
@@ -271,12 +287,13 @@ class Win32OutlookSource:
 
         count = 0
         for folder_id in (_OL_FOLDER_INBOX, _OL_FOLDER_SENTMAIL):
+            from_sent = folder_id == _OL_FOLDER_SENTMAIL
             try:
                 folder = ns.GetDefaultFolder(folder_id)
             except Exception as exc:  # noqa: BLE001 - 1フォルダ失敗で全体を止めない
                 log_debug(f"フォルダ取得失敗 id={folder_id}: {exc!r}")
                 continue
-            for msg in self._iter_folder(folder, my, since, before):
+            for msg in self._iter_folder(folder, my, since, before, from_sent):
                 yield msg
                 count += 1
                 if limit is not None and count >= limit:
@@ -288,6 +305,7 @@ class Win32OutlookSource:
         my: set[str],
         since: datetime | None,
         before: datetime | None = None,
+        from_sent: bool = False,
     ) -> Iterator[Message]:
         """1フォルダ内のメールを新しい順で列挙する（列挙の例外も握る、§9d）。"""
         folder_name = getattr(folder, "Name", "")
@@ -317,7 +335,7 @@ class Win32OutlookSource:
         while item is not None:
             try:
                 if getattr(item, "Class", None) == 43:  # olMail
-                    msg = self._to_message(item, my, folder=folder_name)
+                    msg = self._to_message(item, my, folder_name, from_sent)
                     if msg is not None:
                         yield msg
             except Exception as exc:  # noqa: BLE001 - 1通の失敗で全体を止めない
@@ -328,28 +346,35 @@ class Win32OutlookSource:
                 log_debug(f"GetNext失敗 folder={folder_name}: {exc!r}")
                 break
 
-    def _to_message(self, mail, my: set[str], folder: str) -> Message | None:
-        """COMの`MailItem`を`Message`へ正規化する。"""
+    def _to_message(
+        self, mail, my: set[str], folder: str, from_sent: bool = False
+    ) -> Message | None:
+        """COMの`MailItem`を`Message`へ正規化する。
+
+        Args:
+            mail: COMの`MailItem`。
+            my: 自分のアドレス集合（SMTP＋EX DN）。
+            folder: フォルダ名。
+            from_sent: 送信済みフォルダ由来か（=自分が送信者と確定できる）。
+        """
         to_list: list[str] = []
         cc_list: list[str] = []
         to_unresolved = False
         try:
             for r in mail.Recipients:
-                smtp = self._cached_smtp(r.AddressEntry)
+                # SMTP解決値（失敗時はDNが返る）。DNでも自分のDNと突き合わせられる
+                # よう、解決できなくてもリストに残す（捨てると自分宛判定が崩れる）。
+                val = self._cached_smtp(r.AddressEntry)
                 rtype = getattr(r, "Type", 0)
                 if rtype == _OL_TO:
-                    if _looks_like_smtp(smtp):
-                        to_list.append(smtp)
-                    else:
-                        # 解決不能なTo（配布リスト/EX変換失敗）。§9「迷ったら🔴寄り」
-                        # のため、自分宛か判別不能としてフラグを立てる。
+                    to_list.append(val)
+                    if not _looks_like_smtp(val):
                         to_unresolved = True
-                        log_debug(f"To解決不能: {smtp!r}")
-                elif rtype == _OL_CC and _looks_like_smtp(smtp):
-                    cc_list.append(smtp)
+                elif rtype == _OL_CC:
+                    cc_list.append(val)
         except Exception as exc:  # noqa: BLE001
             log_debug(f"Recipients解決失敗: {exc!r}")
-            to_unresolved = True  # 解決処理ごと失敗→安全側に倒す
+            to_unresolved = True
 
         received_dt = _coerce_time(mail)
 
@@ -363,9 +388,9 @@ class Win32OutlookSource:
             to_list=to_list,
             cc_list=cc_list,
             received_time=received_dt,
-            # 本文プレビューのみ取得。HTMLBodyは重い（COMで全文ロード）ので
-            # 列挙中は読まない（吹き出し表示はプレビューで足りる）。§8の遅延取得方針。
-            body_preview=(getattr(mail, "Body", "") or "")[:500],
+            # 本文は正規化のみ（引用は消さない＝インライン回答を失わないため）。
+            # HTMLBodyは重い（COMで全文ロード）ので列挙中は読まない（§8の遅延取得方針）。
+            body_preview=clean_body(getattr(mail, "Body", "") or ""),
             body_html="",
             unread=bool(getattr(mail, "UnRead", False)),
             importance=int(getattr(mail, "Importance", 1) or 1),
@@ -373,6 +398,10 @@ class Win32OutlookSource:
             to_unresolved=to_unresolved,
         )
         msg.resolve_membership(my)
+        # 送信済みフォルダのメールは確実に自分発（送信者のEX→SMTP解決が失敗しても、
+        # ここで is_from_me を確定させる）。これで返信済みが🔴に残るのを防ぐ。
+        if from_sent:
+            msg.is_from_me = True
         return msg
 
     def open_reply_draft(self, entry_id: str, store_id: str, body_text: str) -> None:

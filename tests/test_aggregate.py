@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+from mailtalk import config
 from mailtalk.aggregate import build_conversations
 from mailtalk.models import Message, normalize_subject
 
@@ -107,9 +108,7 @@ def test_latest_inbound_ignores_my_own_last_send():
     assert conv.last_from_me is True     # ただし最後は自分→🔴にはならない
 
 
-def test_unresolved_to_leans_red():
-    # 配布リスト宛等でToが解決不能な相手メール → 安全側で i_am_to=True(🔴寄り)。
-    now = datetime.now()
+def _unresolved_conv(now):
     m = Message(
         entry_id="x", store_id="S", conversation_id="A",
         subject="件名", sender_email=OTHER, sender_name=OTHER,
@@ -118,6 +117,17 @@ def test_unresolved_to_leans_red():
         to_unresolved=True,
     )
     m.resolve_membership({ME})
-    assert m.is_to_me is False
-    conv = build_conversations([m], now=now)[0]
-    assert conv.i_am_to is True
+    return build_conversations([m], now=now)[0]
+
+
+def test_unresolved_to_not_red_by_default():
+    # 既定では解決不能Toを🔴寄りにしない（暴発防止）。
+    now = datetime.now()
+    assert _unresolved_conv(now).i_am_to is False
+
+
+def test_unresolved_to_leans_red_when_enabled():
+    # config で有効化すると安全側（🔴寄り）に倒す。
+    now = datetime.now()
+    config.set_config(config.Config(red_on_unresolved_to=True))
+    assert _unresolved_conv(now).i_am_to is True

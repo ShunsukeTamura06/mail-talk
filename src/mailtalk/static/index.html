@@ -64,6 +64,11 @@
                   white-space: pre-wrap; word-break: break-word; }
   .bubble.other .body { background: var(--other); border: 1px solid var(--line); border-top-left-radius: 3px; }
   .bubble.self .body { background: var(--self); border-top-right-radius: 3px; }
+  .quote-toggle { font-size: 12px; color: var(--accent); cursor: pointer; margin-top: 5px; user-select: none; }
+  .bubble.self .quote-toggle { text-align: right; }
+  .bubble .body.quote { margin-top: 6px; background: transparent; border: none;
+                        border-left: 3px solid var(--line); border-radius: 0; padding: 4px 0 4px 10px;
+                        color: var(--muted); font-size: 13px; }
   .composer { border-top: 1px solid var(--line); padding: 12px 18px; background: var(--panel); }
   .composer textarea { width: 100%; min-height: 56px; resize: vertical; padding: 9px 12px;
                        border: 1px solid var(--line); border-radius: 10px; font-size: 14px; font-family: inherit; }
@@ -225,7 +230,7 @@ async function openConv(cid) {
     const who = m.is_from_me ? "自分" : (m.sender_name || m.sender_email);
     return `<div class="bubble ${cls}">
       <div class="who">${esc(who)} ・ ${fmtTime(m.received_time)}</div>
-      <div class="body">${esc(m.body_preview || "")}</div>
+      ${renderBody(m.body_preview || "")}
     </div>`;
   }).join("");
 
@@ -261,6 +266,39 @@ async function sendReply(cid) {
     btn.textContent = "失敗しました";
   }
   setTimeout(() => { btn.disabled = false; btn.textContent = "Outlookで返信を開く"; }, 2000);
+}
+
+let _quoteSeq = 0;
+function splitBody(text) {
+  const lines = (text || "").split("\n");
+  const boundary = /^(={3,}|_{8,}|-{2,}\s*(original message|元のメッセージ)\s*-{2,}|(from|差出人|送信者|発信元)\s*[:：].*)$/i;
+  let idx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (boundary.test(lines[i].trim())) { idx = i; break; }
+  }
+  if (idx < 0) return { head: text, rest: "" };
+  const head = lines.slice(0, idx).join("\n").trim();
+  const rest = lines.slice(idx).join("\n").trim();
+  if (!head) return { head: text, rest: "" };  // 先頭から引用なら分割しない（消さない）
+  return { head, rest };
+}
+
+function renderBody(text) {
+  const { head, rest } = splitBody(text);
+  let html = `<div class="body">${esc(head)}</div>`;
+  if (rest) {
+    const id = "q" + (_quoteSeq++);
+    html += `<div class="quote-toggle" onclick="toggleQuote('${id}', this)">▼ 以前のメール内容を表示</div>` +
+            `<div class="body quote" id="${id}" style="display:none">${esc(rest)}</div>`;
+  }
+  return html;
+}
+
+function toggleQuote(id, btn) {
+  const el = document.getElementById(id);
+  const open = el.style.display !== "none";
+  el.style.display = open ? "none" : "block";
+  btn.textContent = open ? "▼ 以前のメール内容を表示" : "▲ 以前のメール内容を隠す";
 }
 
 async function saveDiagnostics(btn) {

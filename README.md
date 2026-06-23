@@ -82,6 +82,7 @@ uv run python -m mailtalk.main
 | `cold_window_days` | 90 | 初回にまず取り込む直近日数。小さいほど初回が速い |
 | `backfill_old` | true | 直近より古いメールを裏で後追い取得するか。`false` で直近のみ＝最速 |
 | `active_threshold` | 6 | 🟠活発と判定する直近件数のしきい値 |
+| `red_on_unresolved_to` | false | 宛先(To)が解決不能なとき🔴寄りにするか。`true`は再現率優先だが暴発しやすい |
 | `host` / `port` | 127.0.0.1 / 8765 | 待受。**host はループバック以外を指定しても 127.0.0.1 に強制**（外部公開は不可） |
 | `open_browser` | true | 起動時に既定ブラウザを開くか |
 

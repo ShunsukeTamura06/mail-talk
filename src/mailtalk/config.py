@@ -24,6 +24,9 @@ class Config:
     cold_window_days: int = 90  # 初回にまず取り込む直近日数
     backfill_old: bool = True  # 直近より古いメールを裏で後追い取得するか
     active_threshold: int = 6  # 🟠活発と判定する直近件数のしきい値
+    # Toが解決不能(配布リスト/EX変換失敗)のとき🔴寄りに倒すか。trueにすると
+    # 再現率は上がるが、解決失敗が多い環境では🔴が暴発するため既定はfalse。
+    red_on_unresolved_to: bool = False
     host: str = "127.0.0.1"  # 待受ホスト（外部公開しないため既定固定）
     port: int = 8765
     open_browser: bool = True  # 起動時に既定ブラウザを開くか
@@ -43,6 +46,7 @@ def _coerce(raw: dict) -> Config:
         "cold_window_days",
         "backfill_old",
         "active_threshold",
+        "red_on_unresolved_to",
         "host",
         "port",
         "open_browser",

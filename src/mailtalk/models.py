@@ -37,6 +37,29 @@ def normalize_subject(subject: str) -> str:
     return s.strip()
 
 
+def clean_body(text: str, max_len: int = 2000) -> str:
+    """吹き出し表示用に本文を正規化する（内容は削除しない）。
+
+    改行コードを統一し（CRLF/CR→LF）、行末空白を除去、3連以上の空行を2行に
+    圧縮する。引用・返信履歴の削除はしない（この職場では引用記号 `>` 付き行に
+    回答本体を書く運用があり、消すと回答が失われるため）。構造の折りたたみは
+    フロント側で行う。
+
+    Args:
+        text: 生の本文。
+        max_len: 返す最大文字数。
+
+    Returns:
+        正規化済み本文（先頭 max_len 文字）。
+    """
+    if not text:
+        return ""
+    t = text.replace("\r\n", "\n").replace("\r", "\n")
+    t = re.sub(r"[ \t]+\n", "\n", t)
+    t = re.sub(r"\n{3,}", "\n\n", t)
+    return t.strip()[:max_len]
+
+
 def normalize_email(addr: str | None) -> str:
     """メールアドレスを比較可能な形（小文字・前後空白除去）へ正規化する。
 

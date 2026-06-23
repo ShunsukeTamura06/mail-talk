@@ -23,6 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .db import Database
+from .models import clean_body
 from .notify import get_user_messages
 from .paths import static_dir
 from .reply import open_reply_for_conversation
@@ -88,7 +89,7 @@ def api_conversation_messages(conversation_id: str) -> dict:
                 "is_from_me": m.is_from_me,
                 "received_time": m.received_time.isoformat(),
                 "subject": m.subject,
-                "body_preview": m.body_preview,
+                "body_preview": clean_body(m.body_preview),
                 "body_html": m.body_html,
                 "unread": m.unread,
             }

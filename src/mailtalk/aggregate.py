@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+from .config import get_config
 from .models import Conversation, Message
 
 # 「活発さ」を測る直近ウィンドウ。CLAUDE.md §3 の「直近24-48h」を48hで採用。
@@ -49,9 +50,11 @@ def build_conversation(
     # 発言が無ければ（全部自分発）最後のメールを基準にする（どのみち🔴にならない）。
     inbound = [m for m in ordered if not m.is_from_me]
     ref = inbound[-1] if inbound else last
-    # §9「To判別不能なら安全側＝🔴寄り」。解決不能Toは i_am_to 扱いに倒す。
-    ref_is_to = ref.is_to_me or ref.to_unresolved
-    i_am_to = ref_is_to
+    # 🔴は「自分が実際にToに居る」を基準にする。解決不能To(配布リスト等)を🔴寄りに
+    # 倒すのは既定OFF（解決失敗が多い環境で🔴が暴発するため）。config で有効化可。
+    i_am_to = ref.is_to_me or (
+        ref.to_unresolved and get_config().red_on_unresolved_to
+    )
     i_am_cc = ref.is_cc_me
 
     # velocity_recentは直近ウィンドウ内の件数。NOTE(#5): 「往復」(送信者交代)では
